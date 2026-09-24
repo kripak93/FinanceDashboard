@@ -1,0 +1,32 @@
+# ---- Sensitive personal / financial data (NEVER commit) ----
+*.PDF
+*.pdf
+*.csv
+*.xlsx
+*.xls
+
+# ---- Throwaway inspection / one-off scripts (contain hardcoded paths/secrets) ----
+cas_inspect.py
+extract_equity.py
+inspect_xlsx.py
+verify.py
+combine.py
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ---- Streamlit ----
+.streamlit/secrets.toml
