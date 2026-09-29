@@ -16,6 +16,7 @@ from streamlit_autorefresh import st_autorefresh
 
 from cas_parser import parse_cas, FIELDS
 from live_prices import fetch_quotes
+from company_detail import get_company_detail, get_price_history
 
 st.set_page_config(page_title="CAS Portfolio Tracker", page_icon="📈", layout="wide")
 
@@ -48,6 +49,16 @@ def parse_files(file_bytes_list, password):
 def get_quotes(symbols, _bucket):
     """_bucket busts the cache on the auto-refresh tick."""
     return fetch_quotes(symbols)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def cached_company_detail(gsymbol, face_value):
+    return get_company_detail(gsymbol, face_value)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def cached_price_history(gsymbol, period):
+    return get_price_history(gsymbol, period)
 
 
 st.title("📈 NSDL CAS Portfolio Tracker")
@@ -88,7 +99,8 @@ if df is None or df.empty:
 statements = sorted(df["Statement Date"].dropna().unique(),
                     key=lambda d: pd.to_datetime(d, format="%d-%b-%Y", errors="coerce"))
 
-tab_dash, tab_convert = st.tabs(["📊 Live Dashboard", "🔄 Convert / Export"])
+tab_dash, tab_company, tab_convert = st.tabs(
+    ["📊 Live Dashboard", "🔍 Company Deep Dive", "🔄 Convert / Export"])
 
 # ---------------------------------------------------------------- Dashboard tab
 with tab_dash:
@@ -223,6 +235,93 @@ with tab_dash:
         }),
         use_container_width=True, hide_index=True,
     )
+
+# -------------------------------------------------------------- Company deep dive
+with tab_company:
+    # Use the latest statement's holdings as the universe of selectable companies
+    latest_stmt = statements[-1]
+    universe = df[df["Statement Date"] == latest_stmt].copy()
+    universe = universe.sort_values("Company")
+
+    names = universe["Company"].tolist()
+    picked = st.selectbox("Select a company", names, key="company_pick")
+    row = universe[universe["Company"] == picked].iloc[0]
+
+    gsymbol = row["Symbol"]
+    face_value = row["Face Value"]
+    shares = float(row["Shares"]) if pd.notna(row["Shares"]) else 0
+
+    st.markdown(f"### {picked}")
+    st.caption(f"{gsymbol or 'Unlisted / suspended'} · {row['Account']}")
+
+    detail = cached_company_detail(gsymbol, float(face_value) if pd.notna(face_value) else None)
+
+    if not detail.get("available"):
+        st.info(f"Market data not available: {detail.get('reason', 'unknown')}")
+        st.write(f"**Your position:** {shares:,.0f} shares · "
+                 f"statement value {rupees(row['Value'])}")
+    else:
+        # Live quote for this one company
+        q = fetch_quotes([gsymbol]).get(gsymbol, {})
+        live_price = q.get("price")
+        live_value = live_price * shares if live_price else row["Value"]
+
+        # ---- Your position
+        st.markdown("#### Your position")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Shares", f"{shares:,.0f}")
+        p2.metric("Live Price", rupees(live_price) if live_price else "—")
+        p3.metric("Live Value", rupees(live_value))
+        p4.metric("vs Statement", rupees(live_value - row["Value"]))
+
+        # ---- Dividends
+        st.markdown("#### Dividends")
+        d1, d2, d3, d4 = st.columns(4)
+        dy = detail["fields"].get("Dividend Yield %")
+        dr = detail.get("dividend_rate")
+        declared = detail.get("declared_pct_face")
+        annual_income = (dr * shares) if dr else None
+        d1.metric("Dividend Yield", f"{dy:.2f}%" if dy else "—")
+        d2.metric("Annual ₹/share", rupees(dr) if dr else "—")
+        d3.metric("Declared % of Face", f"{declared:,.0f}%" if declared else "—",
+                  help="Indian-style: annual dividend ÷ face value × 100")
+        d4.metric("Est. annual income", rupees(annual_income) if annual_income else "—",
+                  help="Annual ₹/share × your shares")
+
+        divs = detail.get("dividends") or []
+        if divs:
+            st.caption("Recent dividends (ex-date · amount per share)")
+            dd = pd.DataFrame(divs)
+            dd["amount"] = dd["amount"].map(lambda a: f"₹{a:,.2f}")
+            st.dataframe(dd.rename(columns={"date": "Ex-Date", "amount": "Amount/Share"}),
+                         use_container_width=True, hide_index=True)
+
+        # ---- Company snapshot
+        st.markdown("#### Company snapshot")
+        f = detail["fields"]
+        s1, s2, s3 = st.columns(3)
+        mcap = f.get("Market Cap")
+        s1.metric("Market Cap", f"₹{mcap/1e7:,.0f} Cr" if mcap else "—")
+        s1.metric("Sector", f.get("Sector") or "—")
+        s2.metric("P/E (TTM)", f"{f['P/E (TTM)']:.1f}" if f.get("P/E (TTM)") else "—")
+        s2.metric("Beta", f"{f['Beta']:.2f}" if f.get("Beta") is not None else "—")
+        s3.metric("52W High", rupees(f["52W High"]) if f.get("52W High") else "—")
+        s3.metric("52W Low", rupees(f["52W Low"]) if f.get("52W Low") else "—")
+
+        # ---- Price history
+        st.markdown("#### Price history")
+        rng = st.radio("Range", ["1mo", "6mo", "1y"], horizontal=True, index=1,
+                       key="hist_range")
+        hist = cached_price_history(gsymbol, rng)
+        if hist is not None and not hist.empty:
+            xcol = hist.columns[0]
+            fig = px.line(hist, x=xcol, y="Close")
+            fig.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10),
+                              yaxis_title="Close (₹)", xaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No price history available.")
+
 
 # ------------------------------------------------------------------ Convert tab
 with tab_convert:
