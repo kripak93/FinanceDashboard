@@ -30,6 +30,24 @@ def rupees(x, lakhs=False):
         return str(x)
 
 
+def rupees_short(x):
+    """Compact Indian-format rupees for narrow screens / metric cards.
+    >= 1 Cr -> '₹1.51 Cr', >= 1 L -> '₹26.17 L', else '₹5,645'."""
+    try:
+        v = float(x)
+    except (ValueError, TypeError):
+        return "—"
+    sign = "-" if v < 0 else ""
+    a = abs(v)
+    if a >= 1e7:
+        return f"{sign}₹{a/1e7:,.2f} Cr"
+    if a >= 1e5:
+        return f"{sign}₹{a/1e5:,.2f} L"
+    if a >= 1e3:
+        return f"{sign}₹{a:,.0f}"
+    return f"{sign}₹{a:,.2f}"
+
+
 @st.cache_data(show_spinner=False)
 def parse_files(file_bytes_list, password):
     all_rows, errors = [], []
@@ -163,10 +181,10 @@ with tab_dash:
 
     # ---- Header stat cards
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Portfolio Value", rupees(total_live),
+    m1.metric("Total Portfolio Value", rupees_short(total_live),
               help=f"Invested (statement): {rupees(total_stmt)} · {len(view)} assets")
-    m2.metric("Day's Profit / Loss", rupees(day_pnl), f"{day_pct:+.2f}% today")
-    m3.metric("Total Unrealized Return", rupees(total_pnl), f"{roi_pct:+.2f}% ROI")
+    m2.metric("Day's Profit / Loss", rupees_short(day_pnl), f"{day_pct:+.2f}% today")
+    m3.metric("Total Unrealized Return", rupees_short(total_pnl), f"{roi_pct:+.2f}% ROI")
     with m4:
         st.markdown("**Intraday Market Breadth**")
         st.markdown(f"🟢 **{advancing} Advancing**  |  🔴 **{declining} Declining**")
@@ -271,8 +289,8 @@ with tab_company:
         p1, p2, p3, p4 = st.columns(4)
         p1.metric("Shares", f"{shares:,.0f}")
         p2.metric("Live Price", rupees(live_price) if live_price else "—")
-        p3.metric("Live Value", rupees(live_value))
-        p4.metric("vs Statement", rupees(live_value - row["Value"]))
+        p3.metric("Live Value", rupees_short(live_value))
+        p4.metric("vs Statement", rupees_short(live_value - row["Value"]))
 
         # ---- Dividends
         st.markdown("#### Dividends")
@@ -285,7 +303,7 @@ with tab_company:
         d2.metric("Annual ₹/share", rupees(dr) if dr else "—")
         d3.metric("Declared % of Face", f"{declared:,.0f}%" if declared else "—",
                   help="Indian-style: annual dividend ÷ face value × 100")
-        d4.metric("Est. annual income", rupees(annual_income) if annual_income else "—",
+        d4.metric("Est. annual income", rupees_short(annual_income) if annual_income else "—",
                   help="Annual ₹/share × your shares")
 
         divs = detail.get("dividends") or []
